@@ -13,7 +13,7 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
   if (!token) return null;
   const payload = await verifySession(token);
   if (!payload) return null;
-  const user = findUserById(payload.uid);
+  const user = await findUserById(payload.uid);
   if (!user) return null;
   return toPublicUser(user);
 }

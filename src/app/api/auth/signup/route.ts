@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   }
   const { email, password, name } = parsed.data;
 
-  if (findUserByEmail(email)) {
+  if (await findUserByEmail(email)) {
     return NextResponse.json(
       { error: "An account with that email already exists" },
       { status: 409 },

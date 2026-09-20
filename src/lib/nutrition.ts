@@ -1,85 +1,148 @@
 import { randomUUID } from "node:crypto";
-import { store } from "./store";
+import { query } from "./db";
 import type { NutritionLog, WeightEntry } from "./types";
 
 export type NutritionInput = Omit<NutritionLog, "id" | "userId" | "createdAt">;
 
-export function listNutrition(
+interface NutritionRow {
+  id: string;
+  user_id: string;
+  date: string;
+  weight_kg: number;
+  calories: number;
+  protein_g: number;
+  notes: string;
+  created_at: string;
+}
+
+function fromRow(r: NutritionRow): NutritionLog {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    date: r.date,
+    weightKg: Number(r.weight_kg),
+    calories: Number(r.calories),
+    proteinG: Number(r.protein_g),
+    notes: r.notes,
+    createdAt: Number(r.created_at),
+  };
+}
+
+export async function listNutrition(
   userId: string,
   opts?: { from?: string; to?: string },
-): NutritionLog[] {
-  const all = store.nutritionLogs.get(userId) ?? [];
-  return all
-    .filter((n) => {
-      if (opts?.from && n.date < opts.from) return false;
-      if (opts?.to && n.date > opts.to) return false;
-      return true;
-    })
-    .sort((a, b) => b.date.localeCompare(a.date));
+): Promise<NutritionLog[]> {
+  const conditions = ["user_id = $1"];
+  const params: unknown[] = [userId];
+  if (opts?.from) {
+    params.push(opts.from);
+    conditions.push(`date >= $${params.length}`);
+  }
+  if (opts?.to) {
+    params.push(opts.to);
+    conditions.push(`date <= $${params.length}`);
+  }
+  const rows = await query<NutritionRow>(
+    `SELECT * FROM nutrition_logs WHERE ${conditions.join(" AND ")} ORDER BY date DESC`,
+    params,
+  );
+  return rows.map(fromRow);
 }
 
-export function todayLog(userId: string, date: string): NutritionLog | undefined {
-  return (store.nutritionLogs.get(userId) ?? []).find((n) => n.date === date);
+export async function todayLog(
+  userId: string,
+  date: string,
+): Promise<NutritionLog | undefined> {
+  const rows = await query<NutritionRow>(
+    "SELECT * FROM nutrition_logs WHERE user_id = $1 AND date = $2",
+    [userId, date],
+  );
+  return rows[0] ? fromRow(rows[0]) : undefined;
 }
 
-export function logNutrition(
+export async function logNutrition(
   userId: string,
   input: NutritionInput,
-): NutritionLog {
-  const arr = store.nutritionLogs.get(userId) ?? [];
-  // Replace existing entry for same date if present
-  const existingIdx = arr.findIndex((n) => n.date === input.date);
-  const log: NutritionLog = {
-    id: existingIdx >= 0 ? arr[existingIdx].id : randomUUID(),
-    userId,
-    ...input,
-    createdAt:
-      existingIdx >= 0 ? arr[existingIdx].createdAt : Date.now(),
-  };
-  if (existingIdx >= 0) arr[existingIdx] = log;
-  else arr.push(log);
-  store.nutritionLogs.set(userId, arr);
+): Promise<NutritionLog> {
+  const rows = await query<NutritionRow>(
+    `INSERT INTO nutrition_logs
+       (id, user_id, date, weight_kg, calories, protein_g, notes, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (user_id, date) DO UPDATE
+       SET weight_kg = EXCLUDED.weight_kg,
+           calories = EXCLUDED.calories,
+           protein_g = EXCLUDED.protein_g,
+           notes = EXCLUDED.notes
+     RETURNING *`,
+    [
+      randomUUID(),
+      userId,
+      input.date,
+      input.weightKg,
+      input.calories,
+      input.proteinG,
+      input.notes,
+      Date.now(),
+    ],
+  );
+  const log = fromRow(rows[0]!);
 
   // Also push a weight entry when the log has a weight value
   if (input.weightKg > 0) {
-    logWeight(userId, { date: input.date, weightKg: input.weightKg });
+    await logWeight(userId, { date: input.date, weightKg: input.weightKg });
   }
 
   return log;
 }
 
-export function deleteNutrition(userId: string, id: string): boolean {
-  const arr = store.nutritionLogs.get(userId) ?? [];
-  const next = arr.filter((n) => n.id !== id);
-  if (next.length === arr.length) return false;
-  store.nutritionLogs.set(userId, next);
-  return true;
+export async function deleteNutrition(userId: string, id: string): Promise<boolean> {
+  const rows = await query(
+    "DELETE FROM nutrition_logs WHERE user_id = $1 AND id = $2 RETURNING id",
+    [userId, id],
+  );
+  return rows.length > 0;
 }
 
-// Weight history — simple append
-export function listWeights(userId: string): WeightEntry[] {
-  return (store.weightEntries.get(userId) ?? [])
-    .slice()
-    .sort((a, b) => a.date.localeCompare(b.date));
+interface WeightRow {
+  id: string;
+  user_id: string;
+  date: string;
+  weight_kg: number;
 }
 
-export function logWeight(userId: string, input: Omit<WeightEntry, "id" | "userId">) {
-  const arr = store.weightEntries.get(userId) ?? [];
-  // Upsert by date — only one entry per date
-  const idx = arr.findIndex((w) => w.date === input.date);
-  const entry: WeightEntry = {
-    id: idx >= 0 ? arr[idx].id : randomUUID(),
-    userId,
-    date: input.date,
-    weightKg: input.weightKg,
+function weightFromRow(r: WeightRow): WeightEntry {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    date: r.date,
+    weightKg: Number(r.weight_kg),
   };
-  if (idx >= 0) arr[idx] = entry;
-  else arr.push(entry);
-  store.weightEntries.set(userId, arr);
-  return entry;
 }
 
-export function latestWeight(userId: string): number | undefined {
-  const list = listWeights(userId);
+// Weight history — simple append (upsert by date)
+export async function listWeights(userId: string): Promise<WeightEntry[]> {
+  const rows = await query<WeightRow>(
+    "SELECT * FROM weight_entries WHERE user_id = $1 ORDER BY date ASC",
+    [userId],
+  );
+  return rows.map(weightFromRow);
+}
+
+export async function logWeight(
+  userId: string,
+  input: Omit<WeightEntry, "id" | "userId">,
+): Promise<WeightEntry> {
+  const rows = await query<WeightRow>(
+    `INSERT INTO weight_entries (id, user_id, date, weight_kg)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (user_id, date) DO UPDATE SET weight_kg = EXCLUDED.weight_kg
+     RETURNING *`,
+    [randomUUID(), userId, input.date, input.weightKg],
+  );
+  return weightFromRow(rows[0]!);
+}
+
+export async function latestWeight(userId: string): Promise<number | undefined> {
+  const list = await listWeights(userId);
   return list.length ? list[list.length - 1]!.weightKg : undefined;
 }

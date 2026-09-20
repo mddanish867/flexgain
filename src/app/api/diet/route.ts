@@ -12,10 +12,10 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const date = url.searchParams.get("date");
   if (date) {
-    const plan = getDietPlan(user.id, date);
+    const plan = await getDietPlan(user.id, date);
     return NextResponse.json({ plan: plan ?? null });
   }
-  return NextResponse.json({ plans: listDietPlans(user.id) });
+  return NextResponse.json({ plans: await listDietPlans(user.id) });
 }
 
 const MealSchema = z.object({
@@ -49,6 +49,6 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const plan = upsertDietPlan(user.id, parsed.data.date, parsed.data.meals);
+  const plan = await upsertDietPlan(user.id, parsed.data.date, parsed.data.meals);
   return NextResponse.json({ plan });
 }

@@ -12,9 +12,8 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const from = url.searchParams.get("from") ?? undefined;
   const to = url.searchParams.get("to") ?? undefined;
-  return NextResponse.json({
-    logs: listNutrition(user.id, { from, to }).slice(0, 60),
-  });
+  const logs = await listNutrition(user.id, { from, to });
+  return NextResponse.json({ logs: logs.slice(0, 60) });
 }
 
 const Body = z.object({
@@ -41,6 +40,6 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const log = logNutrition(user.id, parsed.data);
+  const log = await logNutrition(user.id, parsed.data);
   return NextResponse.json({ log });
 }

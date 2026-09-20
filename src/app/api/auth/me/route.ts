@@ -11,7 +11,7 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
-  const user = findUserById(session.uid);
+  const user = await findUserById(session.uid);
   if (!user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }

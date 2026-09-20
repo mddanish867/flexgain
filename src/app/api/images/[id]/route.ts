@@ -10,22 +10,14 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
-  const img = getImage(id);
+  const img = await getImage(id);
   if (!img) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  // Extract base64 payload from data URL
-  const m = img.src.match(/^data:([^;]+);base64,(.+)$/);
-  if (!m) {
-    return NextResponse.json({ error: "Corrupt image" }, { status: 500 });
-  }
-  const mime = m[1]!;
-  const b64 = m[2]!;
-  const buf = Buffer.from(b64, "base64");
-  return new NextResponse(buf, {
+  return new NextResponse(new Uint8Array(img.data), {
     status: 200,
     headers: {
-      "Content-Type": mime,
+      "Content-Type": img.mime,
       "Cache-Control": "private, max-age=3600",
     },
   });
@@ -38,7 +30,7 @@ export async function DELETE(
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
-  const ok = deleteImage(id, user.id);
+  const ok = await deleteImage(id, user.id);
   if (!ok) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

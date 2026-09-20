@@ -12,10 +12,11 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const url = new URL(req.url);
   const date = url.searchParams.get("date") ?? undefined;
-  return NextResponse.json({
-    logs: listMuscleLogs(user.id, date),
-    sorenessByGroup: sorenessByGroup(user.id),
-  });
+  const [logs, byGroup] = await Promise.all([
+    listMuscleLogs(user.id, date),
+    sorenessByGroup(user.id),
+  ]);
+  return NextResponse.json({ logs, sorenessByGroup: byGroup });
 }
 
 const Body = z.object({
@@ -41,6 +42,6 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const log = logMuscle(user.id, parsed.data as never);
+  const log = await logMuscle(user.id, parsed.data as never);
   return NextResponse.json({ log });
 }

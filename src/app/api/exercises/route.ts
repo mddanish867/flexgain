@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json({ exercises: listExercises(user.id) });
+  return NextResponse.json({ exercises: await listExercises(user.id) });
 }
 
 const Body = z.object({
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const ex = createExercise(user.id, {
+  const ex = await createExercise(user.id, {
     name: parsed.data.name,
     muscleGroup: parsed.data.muscleGroup as never,
     sets: parsed.data.sets,

@@ -1,15 +1,48 @@
 import { randomUUID } from "node:crypto";
-import { store } from "./store";
+import { query } from "./db";
 import type { DietPlan, Meal } from "./types";
 
-export function listDietPlans(userId: string): DietPlan[] {
-  return (store.dietPlans.get(userId) ?? [])
-    .slice()
-    .sort((a, b) => b.date.localeCompare(a.date));
+interface DietRow {
+  id: string;
+  user_id: string;
+  date: string;
+  meals: Meal[];
+  total_calories: number;
+  total_protein: number;
+  created_at: string;
+  updated_at: string;
 }
 
-export function getDietPlan(userId: string, date: string): DietPlan | undefined {
-  return (store.dietPlans.get(userId) ?? []).find((p) => p.date === date);
+function fromRow(r: DietRow): DietPlan {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    date: r.date,
+    meals: r.meals,
+    totalCalories: Number(r.total_calories),
+    totalProtein: Number(r.total_protein),
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+  };
+}
+
+export async function listDietPlans(userId: string): Promise<DietPlan[]> {
+  const rows = await query<DietRow>(
+    "SELECT * FROM diet_plans WHERE user_id = $1 ORDER BY date DESC",
+    [userId],
+  );
+  return rows.map(fromRow);
+}
+
+export async function getDietPlan(
+  userId: string,
+  date: string,
+): Promise<DietPlan | undefined> {
+  const rows = await query<DietRow>(
+    "SELECT * FROM diet_plans WHERE user_id = $1 AND date = $2",
+    [userId, date],
+  );
+  return rows[0] ? fromRow(rows[0]) : undefined;
 }
 
 function totals(meals: Meal[]) {
@@ -23,37 +56,34 @@ function totals(meals: Meal[]) {
   );
 }
 
-export function upsertDietPlan(
+export async function upsertDietPlan(
   userId: string,
   date: string,
   meals: Meal[],
-): DietPlan {
-  const arr = store.dietPlans.get(userId) ?? [];
+): Promise<DietPlan> {
   const now = Date.now();
   const t = totals(meals);
-  const idx = arr.findIndex((p) => p.date === date);
-  const plan: DietPlan = {
-    id: idx >= 0 ? arr[idx]!.id : randomUUID(),
-    userId,
-    date,
-    meals,
-    totalCalories: t.calories,
-    totalProtein: t.protein,
-    createdAt: idx >= 0 ? arr[idx]!.createdAt : now,
-    updatedAt: now,
-  };
-  if (idx >= 0) arr[idx] = plan;
-  else arr.push(plan);
-  store.dietPlans.set(userId, arr);
-  return plan;
+  const rows = await query<DietRow>(
+    `INSERT INTO diet_plans
+       (id, user_id, date, meals, total_calories, total_protein, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (user_id, date) DO UPDATE
+       SET meals = EXCLUDED.meals,
+           total_calories = EXCLUDED.total_calories,
+           total_protein = EXCLUDED.total_protein,
+           updated_at = EXCLUDED.updated_at
+     RETURNING *`,
+    [randomUUID(), userId, date, JSON.stringify(meals), t.calories, t.protein, now, now],
+  );
+  return fromRow(rows[0]!);
 }
 
-export function deleteDietPlan(userId: string, id: string): boolean {
-  const arr = store.dietPlans.get(userId) ?? [];
-  const next = arr.filter((p) => p.id !== id);
-  if (next.length === arr.length) return false;
-  store.dietPlans.set(userId, next);
-  return true;
+export async function deleteDietPlan(userId: string, id: string): Promise<boolean> {
+  const rows = await query(
+    "DELETE FROM diet_plans WHERE user_id = $1 AND id = $2 RETURNING id",
+    [userId, id],
+  );
+  return rows.length > 0;
 }
 
 export function newMeal(): Meal {

@@ -1,41 +1,68 @@
 import { randomUUID } from "node:crypto";
-import { store } from "./store";
+import { query } from "./db";
 import type { MuscleGroup, MuscleLog } from "./types";
 
-export function listMuscleLogs(userId: string, date?: string): MuscleLog[] {
-  const all = store.muscleLogs.get(userId) ?? [];
-  return date ? all.filter((m) => m.date === date) : all;
+interface MuscleRow {
+  id: string;
+  user_id: string;
+  date: string;
+  muscle_group: MuscleGroup;
+  soreness: number;
+  trained: boolean;
 }
 
-export function logMuscle(
+function fromRow(r: MuscleRow): MuscleLog {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    date: r.date,
+    muscleGroup: r.muscle_group,
+    soreness: Number(r.soreness),
+    trained: r.trained,
+  };
+}
+
+export async function listMuscleLogs(
+  userId: string,
+  date?: string,
+): Promise<MuscleLog[]> {
+  const rows = date
+    ? await query<MuscleRow>(
+        "SELECT * FROM muscle_logs WHERE user_id = $1 AND date = $2",
+        [userId, date],
+      )
+    : await query<MuscleRow>("SELECT * FROM muscle_logs WHERE user_id = $1", [
+        userId,
+      ]);
+  return rows.map(fromRow);
+}
+
+export async function logMuscle(
   userId: string,
   input: Omit<MuscleLog, "id" | "userId">,
-): MuscleLog {
-  const arr = store.muscleLogs.get(userId) ?? [];
-  const idx = arr.findIndex(
-    (m) => m.date === input.date && m.muscleGroup === input.muscleGroup,
+): Promise<MuscleLog> {
+  const rows = await query<MuscleRow>(
+    `INSERT INTO muscle_logs (id, user_id, date, muscle_group, soreness, trained)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (user_id, date, muscle_group) DO UPDATE
+       SET soreness = EXCLUDED.soreness, trained = EXCLUDED.trained
+     RETURNING *`,
+    [randomUUID(), userId, input.date, input.muscleGroup, input.soreness, input.trained],
   );
-  const log: MuscleLog = {
-    id: idx >= 0 ? arr[idx].id : randomUUID(),
-    userId,
-    ...input,
-  };
-  if (idx >= 0) arr[idx] = log;
-  else arr.push(log);
-  store.muscleLogs.set(userId, arr);
-  return log;
+  return fromRow(rows[0]!);
 }
 
 /** Average soreness per muscle group over last N days */
-export function sorenessByGroup(
+export async function sorenessByGroup(
   userId: string,
   sinceDays = 7,
-): Record<MuscleGroup, number> {
+): Promise<Record<MuscleGroup, number>> {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - sinceDays);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
-  const all = (store.muscleLogs.get(userId) ?? []).filter(
-    (m) => m.date >= cutoffStr,
+  const rows = await query<MuscleRow>(
+    "SELECT * FROM muscle_logs WHERE user_id = $1 AND date >= $2",
+    [userId, cutoffStr],
   );
   const result: Record<MuscleGroup, number> = {
     chest: 0,
@@ -46,8 +73,8 @@ export function sorenessByGroup(
     core: 0,
     full_body: 0,
   };
-  for (const log of all) {
-    result[log.muscleGroup] = Math.max(result[log.muscleGroup], log.soreness);
+  for (const row of rows.map(fromRow)) {
+    result[row.muscleGroup] = Math.max(result[row.muscleGroup], row.soreness);
   }
   return result;
 }

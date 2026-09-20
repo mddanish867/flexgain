@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=flexgain
+      - POSTGRES_PASSWORD=flexgain
+      - POSTGRES_DB=flexgain
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flexgain"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   flexgain:
     build:
       context: .
@@ -9,4 +26,13 @@ services:
       - .env.local
     environment:
       - NODE_ENV=production
+      # Overrides any DATABASE_URL in .env.local so the container always
+      # talks to the Postgres service above, not a host/cloud database.
+      - DATABASE_URL=postgres://flexgain:flexgain@postgres:5432/flexgain?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  pgdata:

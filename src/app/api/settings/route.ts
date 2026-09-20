@@ -59,7 +59,7 @@ export async function PATCH(req: NextRequest) {
     patch.settings = nextSettings;
   }
 
-  const updated = updateUser(user.id, patch);
+  const updated = await updateUser(user.id, patch);
   if (!updated) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }

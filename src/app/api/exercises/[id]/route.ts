@@ -36,7 +36,7 @@ export async function PATCH(
       { status: 400 },
     );
   }
-  const ex = updateExercise(user.id, id, parsed.data as never);
+  const ex = await updateExercise(user.id, id, parsed.data as never);
   if (!ex) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ exercise: ex });
 }
@@ -48,7 +48,7 @@ export async function DELETE(
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
-  const ok = deleteExercise(user.id, id);
+  const ok = await deleteExercise(user.id, id);
   if (!ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

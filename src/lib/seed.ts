@@ -1,44 +1,42 @@
-import { hashPassword } from "./password";
-import { store } from "./store";
+import { createUser, findUserByEmail, updateUser } from "./users";
 import { createExercise } from "./exercises";
 import { logWeight, logNutrition } from "./nutrition";
 import { logMuscle } from "./muscles";
 import { upsertDietPlan, newMeal } from "./diet";
-import { randomUUID } from "node:crypto";
-import type { User } from "./types";
 
 /**
  * Seeds a demo user with a week of plausible data so the dashboard
  * doesn't look empty on first login.
  *
- * Runs once per process. Idempotent — guarded by `store.seeded`.
+ * Idempotent — checks the `users` table for the demo email before
+ * inserting anything, so it's safe to call on every request.
  * Demo credentials: demo@flexgain.app / demo1234
  */
 export async function ensureSeed(): Promise<void> {
-  if (store.seeded) return;
-  if (process.env.FLEXGAIN_SEED === "0") {
-    store.seeded = true;
-    return;
-  }
-  store.seeded = true;
+  if (process.env.FLEXGAIN_SEED === "0") return;
+  const existing = await findUserByEmail("demo@flexgain.app");
+  if (existing) return;
 
-  const { hash, salt } = await hashPassword("demo1234");
-  const user: User = {
-    id: randomUUID(),
-    email: "demo@flexgain.app",
-    name: "Md Danish Akhtar",
-    passwordHash: hash,
-    passwordSalt: salt,
-    createdAt: Date.now(),
+  let user;
+  try {
+    user = await createUser({
+      email: "demo@flexgain.app",
+      password: "demo1234",
+      name: "Md Danish Akhtar",
+    });
+  } catch (err) {
+    // Another instance/request seeded concurrently — nothing to do.
+    if (err instanceof Error && err.message === "EMAIL_TAKEN") return;
+    throw err;
+  }
+  await updateUser(user.id, {
     settings: {
       weightGoalKg: 60,
       calorieGoal: 2374,
       proteinGoal: 108,
       units: "kg",
     },
-  };
-  store.users.set(user.id, user);
-  store.usersByEmail.set(user.email, user.id);
+  });
 
   // Sample exercises across the week
   const samples: Array<Parameters<typeof createExercise>[1]> = [
@@ -98,7 +96,7 @@ export async function ensureSeed(): Promise<void> {
       imageId: null,
     },
   ];
-  for (const s of samples) createExercise(user.id, s);
+  for (const s of samples) await createExercise(user.id, s);
 
   // Sample weights (last 14 days)
   const today = new Date();
@@ -108,12 +106,12 @@ export async function ensureSeed(): Promise<void> {
     const dateStr = d.toISOString().slice(0, 10);
     // gentle downward trend toward 60kg goal from 55kg
     const weight = 55 - i * 0.07 + (Math.random() - 0.5) * 0.3;
-    logWeight(user.id, { date: dateStr, weightKg: Number(weight.toFixed(2)) });
+    await logWeight(user.id, { date: dateStr, weightKg: Number(weight.toFixed(2)) });
   }
 
   // Today's nutrition + one earlier entry
   const todayStr = today.toISOString().slice(0, 10);
-  logNutrition(user.id, {
+  await logNutrition(user.id, {
     date: todayStr,
     weightKg: 54,
     calories: 0,
@@ -122,7 +120,7 @@ export async function ensureSeed(): Promise<void> {
   });
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  logNutrition(user.id, {
+  await logNutrition(user.id, {
     date: yesterday.toISOString().slice(0, 10),
     weightKg: 54.2,
     calories: 1800,
@@ -132,7 +130,7 @@ export async function ensureSeed(): Promise<void> {
 
   // Sample muscle logs for today
   for (const g of ["chest", "back", "legs", "shoulders", "arms", "core"] as const) {
-    logMuscle(user.id, {
+    await logMuscle(user.id, {
       date: todayStr,
       muscleGroup: g,
       soreness: Math.floor(Math.random() * 7) + 2,
@@ -148,5 +146,5 @@ export async function ensureSeed(): Promise<void> {
       { ...newMeal(), name: "Protein shake", calories: 180, proteinG: 25, carbsG: 8, fatG: 3, time: "17:00" },
     ],
   };
-  upsertDietPlan(user.id, todayStr, plan.meals);
+  await upsertDietPlan(user.id, todayStr, plan.meals);
 }

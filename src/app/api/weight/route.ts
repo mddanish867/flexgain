@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json({ entries: listWeights(user.id) });
+  return NextResponse.json({ entries: await listWeights(user.id) });
 }
 
 const Body = z.object({
@@ -33,6 +33,6 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const entry = logWeight(user.id, parsed.data);
+  const entry = await logWeight(user.id, parsed.data);
   return NextResponse.json({ entry });
 }

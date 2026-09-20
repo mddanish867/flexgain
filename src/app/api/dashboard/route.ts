@@ -22,17 +22,27 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const today = todayStr();
+  const [exercises, todayNutrition, nutritionHistory, weights, soreness, diet, currentWeight] =
+    await Promise.all([
+      listExercises(user.id),
+      todayLog(user.id, today),
+      listNutrition(user.id),
+      listWeights(user.id),
+      sorenessByGroup(user.id),
+      getDietPlan(user.id, today),
+      latestWeight(user.id),
+    ]);
   return NextResponse.json({
     today,
     settings: user.settings,
-    exercises: listExercises(user.id),
+    exercises,
     nutrition: {
-      today: todayLog(user.id, today) ?? null,
-      history: listNutrition(user.id).slice(0, 30),
+      today: todayNutrition ?? null,
+      history: nutritionHistory.slice(0, 30),
     },
-    weights: listWeights(user.id).slice(-90),
-    sorenessByGroup: sorenessByGroup(user.id),
-    diet: getDietPlan(user.id, today) ?? null,
-    currentWeight: latestWeight(user.id) ?? null,
+    weights: weights.slice(-90),
+    sorenessByGroup: soreness,
+    diet: diet ?? null,
+    currentWeight: currentWeight ?? null,
   });
 }

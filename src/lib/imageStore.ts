@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { store } from "./store";
+import { query } from "./db";
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+interface ImageRow {
+  id: string;
+  owner_id: string;
+  mime: string;
+  data: Buffer;
+  uploaded_at: string;
+}
 
 export async function saveImage(
   ownerId: string,
@@ -15,28 +23,30 @@ export async function saveImage(
     throw new Error("UNSUPPORTED_MEDIA_TYPE");
   }
   const buf = Buffer.from(await file.arrayBuffer());
-  const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
   const id = randomUUID();
-  store.images.set(id, { src: dataUrl, mime, uploadedAt: Date.now(), ownerId });
+  await query(
+    `INSERT INTO images (id, owner_id, mime, data, uploaded_at)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [id, ownerId, mime, buf, Date.now()],
+  );
   return { id, mime };
 }
 
-export function getImage(
+export async function getImage(
   id: string,
   ownerId?: string,
-):
-  | { src: string; mime: string; ownerId: string }
-  | undefined {
-  const img = store.images.get(id);
+): Promise<{ data: Buffer; mime: string; ownerId: string } | undefined> {
+  const rows = await query<ImageRow>("SELECT * FROM images WHERE id = $1", [id]);
+  const img = rows[0];
   if (!img) return undefined;
-  if (ownerId && img.ownerId !== ownerId) return undefined;
-  return img;
+  if (ownerId && img.owner_id !== ownerId) return undefined;
+  return { data: img.data, mime: img.mime, ownerId: img.owner_id };
 }
 
-export function deleteImage(id: string, ownerId: string): boolean {
-  const img = store.images.get(id);
-  if (!img) return false;
-  if (img.ownerId !== ownerId) return false;
-  store.images.delete(id);
-  return true;
+export async function deleteImage(id: string, ownerId: string): Promise<boolean> {
+  const rows = await query(
+    "DELETE FROM images WHERE id = $1 AND owner_id = $2 RETURNING id",
+    [id, ownerId],
+  );
+  return rows.length > 0;
 }

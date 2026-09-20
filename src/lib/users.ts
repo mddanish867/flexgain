@@ -1,18 +1,47 @@
 /**
- * User repository — the only place that mutates the in-memory user store.
- * Keeping this isolated makes it easy to swap for a real DB later.
+ * User repository — the only place that mutates the users table.
  */
 import { randomUUID } from "node:crypto";
-import { store } from "./store";
+import { query } from "./db";
 import { hashPassword } from "./password";
-import type { PublicUser, User } from "./types";
+import type { PublicUser, User, UserSettings } from "./types";
 
-export const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS: UserSettings = {
   weightGoalKg: 80,
   calorieGoal: 2400,
   proteinGoal: 180,
-  units: "kg" as const,
+  units: "kg",
 };
+
+interface UserRow {
+  id: string;
+  email: string;
+  name: string;
+  password_hash: string;
+  password_salt: string;
+  created_at: string;
+  weight_goal_kg: number;
+  calorie_goal: number;
+  protein_goal: number;
+  units: "kg" | "lb";
+}
+
+function fromRow(r: UserRow): User {
+  return {
+    id: r.id,
+    email: r.email,
+    name: r.name,
+    passwordHash: r.password_hash,
+    passwordSalt: r.password_salt,
+    createdAt: Number(r.created_at),
+    settings: {
+      weightGoalKg: Number(r.weight_goal_kg),
+      calorieGoal: Number(r.calorie_goal),
+      proteinGoal: Number(r.protein_goal),
+      units: r.units,
+    },
+  };
+}
 
 export function toPublicUser(u: User): PublicUser {
   return {
@@ -23,44 +52,68 @@ export function toPublicUser(u: User): PublicUser {
   };
 }
 
-export function findUserByEmail(email: string): User | undefined {
-  const id = store.usersByEmail.get(email.toLowerCase());
-  if (!id) return undefined;
-  return store.users.get(id);
+export async function findUserByEmail(email: string): Promise<User | undefined> {
+  const rows = await query<UserRow>("SELECT * FROM users WHERE email = $1", [
+    email.toLowerCase(),
+  ]);
+  return rows[0] ? fromRow(rows[0]) : undefined;
 }
 
-export function findUserById(id: string): User | undefined {
-  return store.users.get(id);
+export async function findUserById(id: string): Promise<User | undefined> {
+  const rows = await query<UserRow>("SELECT * FROM users WHERE id = $1", [id]);
+  return rows[0] ? fromRow(rows[0]) : undefined;
 }
 
 export async function createUser(input: {
   email: string;
   password: string;
   name: string;
+  settings?: UserSettings;
 }): Promise<User> {
   const email = input.email.toLowerCase().trim();
-  if (store.usersByEmail.has(email)) {
+  const existing = await findUserByEmail(email);
+  if (existing) {
     throw new Error("EMAIL_TAKEN");
   }
   const { hash, salt } = await hashPassword(input.password);
-  const user: User = {
-    id: randomUUID(),
-    email,
-    name: input.name.trim(),
-    passwordHash: hash,
-    passwordSalt: salt,
-    createdAt: Date.now(),
-    settings: { ...DEFAULT_SETTINGS },
-  };
-  store.users.set(user.id, user);
-  store.usersByEmail.set(email, user.id);
-  return user;
+  const settings = input.settings ?? DEFAULT_SETTINGS;
+  const rows = await query<UserRow>(
+    `INSERT INTO users
+       (id, email, name, password_hash, password_salt, created_at,
+        weight_goal_kg, calorie_goal, protein_goal, units)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     RETURNING *`,
+    [
+      randomUUID(),
+      email,
+      input.name.trim(),
+      hash,
+      salt,
+      Date.now(),
+      settings.weightGoalKg,
+      settings.calorieGoal,
+      settings.proteinGoal,
+      settings.units,
+    ],
+  );
+  return fromRow(rows[0]!);
 }
 
-export function updateUser(id: string, patch: Partial<User>): User | undefined {
-  const existing = store.users.get(id);
+export async function updateUser(
+  id: string,
+  patch: Partial<{ name: string; settings: UserSettings }>,
+): Promise<User | undefined> {
+  const existing = await findUserById(id);
   if (!existing) return undefined;
-  const next = { ...existing, ...patch };
-  store.users.set(id, next);
-  return next;
+  const name = patch.name ?? existing.name;
+  const settings = patch.settings ?? existing.settings;
+  const rows = await query<UserRow>(
+    `UPDATE users
+        SET name = $2, weight_goal_kg = $3, calorie_goal = $4,
+            protein_goal = $5, units = $6
+      WHERE id = $1
+      RETURNING *`,
+    [id, name, settings.weightGoalKg, settings.calorieGoal, settings.proteinGoal, settings.units],
+  );
+  return rows[0] ? fromRow(rows[0]) : undefined;
 }
