@@ -1,0 +1,2 @@
+This directory is intentionally kept in git so Docker's `COPY ./public ./public`
+step has a source to copy, even before any static assets are added.
