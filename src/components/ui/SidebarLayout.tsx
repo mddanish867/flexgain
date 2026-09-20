@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -8,8 +9,10 @@ import {
   LayoutDashboard,
   LineChart,
   LogOut,
+  Menu,
   Salad,
   Settings,
+  X,
 } from "lucide-react";
 import { BrandMark } from "@/components/ui/BrandMark";
 import { Avatar } from "@/components/ui/Avatar";
@@ -31,6 +34,7 @@ const NAV = [
 export function SidebarLayout({ user, children }: SidebarLayoutProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -40,6 +44,47 @@ export function SidebarLayout({ user, children }: SidebarLayoutProps) {
 
   return (
     <div className="min-h-screen bg-bg text-fg">
+      {/* Mobile/tablet top bar — visible below the lg breakpoint */}
+      <header className="lg:hidden sticky top-0 z-40 flex items-center justify-between h-14 px-4 border-b border-border bg-bg">
+        <BrandMark />
+        <button
+          type="button"
+          aria-label="Open menu"
+          onClick={() => setMobileOpen(true)}
+          className="inline-flex items-center justify-center h-9 w-9 rounded border border-border text-fg-muted hover:text-fg hover:border-border-strong"
+        >
+          <Menu size={18} />
+        </button>
+      </header>
+
+      {/* Mobile/tablet slide-in drawer */}
+      {mobileOpen ? (
+        <div className="lg:hidden fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside className="absolute left-0 top-0 h-full w-72 max-w-[80vw] bg-bg border-r border-border flex flex-col">
+            <div className="flex items-center justify-end px-4 pt-4">
+              <button
+                type="button"
+                aria-label="Close menu"
+                onClick={() => setMobileOpen(false)}
+                className="inline-flex items-center justify-center h-9 w-9 rounded border border-border text-fg-muted hover:text-fg hover:border-border-strong"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <SidebarContent
+              pathname={pathname}
+              onSignOut={signOut}
+              user={user}
+              onNavigate={() => setMobileOpen(false)}
+            />
+          </aside>
+        </div>
+      ) : null}
+
       <div className="flex">
         <aside className="hidden lg:flex flex-col w-64 shrink-0 border-r border-border h-screen sticky top-0">
           <SidebarContent pathname={pathname} onSignOut={signOut} user={user} />
