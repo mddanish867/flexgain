@@ -4,6 +4,7 @@ import { findUserById, toPublicUser } from "@/lib/users";
 import { ensureSeed } from "@/lib/seed";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   await ensureSeed();

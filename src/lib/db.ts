@@ -36,9 +36,14 @@ function createPool(): Pool {
   });
 }
 
-export const pool: Pool = globalThis.__FLEXGAIN_PG_POOL__ ?? createPool();
-if (!globalThis.__FLEXGAIN_PG_POOL__) {
-  globalThis.__FLEXGAIN_PG_POOL__ = pool;
+// Lazy: constructed on first real use, not at module import time, so
+// `next build` (which loads route modules to collect page data) doesn't
+// require DATABASE_URL to be present.
+function getPool(): Pool {
+  if (!globalThis.__FLEXGAIN_PG_POOL__) {
+    globalThis.__FLEXGAIN_PG_POOL__ = createPool();
+  }
+  return globalThis.__FLEXGAIN_PG_POOL__;
 }
 
 const SCHEMA_SQL = `
@@ -125,7 +130,7 @@ CREATE TABLE IF NOT EXISTS images (
 /** Runs once per warm instance; safe to call before every query. */
 export function ensureSchema(): Promise<void> {
   if (!globalThis.__FLEXGAIN_SCHEMA_READY__) {
-    globalThis.__FLEXGAIN_SCHEMA_READY__ = pool
+    globalThis.__FLEXGAIN_SCHEMA_READY__ = getPool()
       .query(SCHEMA_SQL)
       .then(() => undefined);
   }
@@ -137,7 +142,7 @@ export async function query<T extends QueryResultRow>(
   params?: unknown[],
 ): Promise<T[]> {
   await ensureSchema();
-  const res = await pool.query<T>(text, params as unknown[]);
+  const res = await getPool().query<T>(text, params as unknown[]);
   return res.rows;
 }
 
