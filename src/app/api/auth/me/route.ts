@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/session";
-import { findUserById, toPublicUser } from "@/lib/users";
+import { getCurrentUser } from "@/lib/currentUser";
 import { ensureSeed } from "@/lib/seed";
 
 export const runtime = "nodejs";
@@ -8,13 +7,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   await ensureSeed();
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-  const user = await findUserById(session.uid);
+  const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
-  return NextResponse.json({ user: toPublicUser(user) });
+  return NextResponse.json({ user });
 }

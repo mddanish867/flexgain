@@ -70,3 +70,20 @@ export async function verifyPassword(
   }
   return diff === 0;
 }
+
+/**
+ * Burns the same CPU as a real `verifyPassword` call against a fixed
+ * dummy salt and hash.
+ *
+ * Sign-in calls this when no account matches the submitted email, so the
+ * "unknown email" and "wrong password" paths take comparable time and a
+ * response clock can't be used to enumerate registered addresses.
+ */
+const DUMMY_SALT_HEX = "a".repeat(SALT_LENGTH * 2);
+const DUMMY_HASH_HEX = "b".repeat(KEY_LENGTH * 2);
+
+export async function burnPasswordVerification(
+  password: string,
+): Promise<void> {
+  await verifyPassword(password, DUMMY_SALT_HEX, DUMMY_HASH_HEX);
+}

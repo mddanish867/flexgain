@@ -18,7 +18,8 @@ export async function GET(req: NextRequest) {
 
 const Body = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  weightKg: z.number().min(20).max(400),
+  // Optional: logging what you ate shouldn't require a scale reading.
+  weightKg: z.number().min(20).max(400).nullable().default(null),
   calories: z.number().min(0).max(10000),
   proteinG: z.number().min(0).max(600),
   notes: z.string().max(500).default(""),

@@ -22,7 +22,8 @@ export async function GET(req: NextRequest) {
 const Body = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   muscleGroup: z.enum(MUSCLE_GROUPS as [string, ...string[]]),
-  soreness: z.number().int().min(1).max(10),
+  // 0 is valid and means "not sore" — it's where the slider starts.
+  soreness: z.number().int().min(0).max(10),
   trained: z.boolean().default(false),
 });
 

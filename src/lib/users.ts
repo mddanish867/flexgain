@@ -24,6 +24,7 @@ interface UserRow {
   calorie_goal: number;
   protein_goal: number;
   units: "kg" | "lb";
+  token_version: number;
 }
 
 function fromRow(r: UserRow): User {
@@ -34,6 +35,7 @@ function fromRow(r: UserRow): User {
     passwordHash: r.password_hash,
     passwordSalt: r.password_salt,
     createdAt: Number(r.created_at),
+    tokenVersion: Number(r.token_version),
     settings: {
       weightGoalKg: Number(r.weight_goal_kg),
       calorieGoal: Number(r.calorie_goal),
@@ -116,4 +118,20 @@ export async function updateUser(
     [id, name, settings.weightGoalKg, settings.calorieGoal, settings.proteinGoal, settings.units],
   );
   return rows[0] ? fromRow(rows[0]) : undefined;
+}
+
+/**
+ * Invalidates every session issued so far for this user by bumping the
+ * version that sessions are checked against. Used by "sign out
+ * everywhere" — stateless JWTs can't be revoked individually, so the
+ * server changes what it will accept instead.
+ */
+export async function bumpTokenVersion(id: string): Promise<number | undefined> {
+  const rows = await query<{ token_version: number }>(
+    `UPDATE users SET token_version = token_version + 1
+      WHERE id = $1
+      RETURNING token_version`,
+    [id],
+  );
+  return rows[0] ? Number(rows[0].token_version) : undefined;
 }

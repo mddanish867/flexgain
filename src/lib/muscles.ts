@@ -52,7 +52,15 @@ export async function logMuscle(
   return fromRow(rows[0]!);
 }
 
-/** Average soreness per muscle group over last N days */
+/**
+ * Current soreness per muscle group — the most recent reading inside the
+ * window, not the worst one.
+ *
+ * This previously took a 7-day maximum, which meant one brutal leg day
+ * kept legs showing red until it aged out, even after the user had logged
+ * themselves fully recovered. Groups with no reading in the window report
+ * 0.
+ */
 export async function sorenessByGroup(
   userId: string,
   sinceDays = 7,
@@ -60,8 +68,13 @@ export async function sorenessByGroup(
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - sinceDays);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
+  // DISTINCT ON keeps the first row of each group under this ordering,
+  // i.e. the latest date that group was logged.
   const rows = await query<MuscleRow>(
-    "SELECT * FROM muscle_logs WHERE user_id = $1 AND date >= $2",
+    `SELECT DISTINCT ON (muscle_group) *
+       FROM muscle_logs
+      WHERE user_id = $1 AND date >= $2
+      ORDER BY muscle_group, date DESC`,
     [userId, cutoffStr],
   );
   const result: Record<MuscleGroup, number> = {
@@ -74,7 +87,7 @@ export async function sorenessByGroup(
     full_body: 0,
   };
   for (const row of rows.map(fromRow)) {
-    result[row.muscleGroup] = Math.max(result[row.muscleGroup], row.soreness);
+    result[row.muscleGroup] = row.soreness;
   }
   return result;
 }

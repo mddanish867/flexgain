@@ -15,6 +15,7 @@ import { MonoLabel } from "@/components/ui/MonoLabel";
 import { Button } from "@/components/ui/Button";
 import { BodyMap } from "@/components/dashboard/BodyMap";
 import { apiGet, apiPost } from "@/lib/client";
+import { formatWeight, fromKg } from "@/lib/units";
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import type {
   DietPlan,
@@ -56,11 +57,27 @@ const MUSCLE_KEYS: MuscleGroup[] = [
   "core",
 ];
 
-function pctToGoal(current: number | null, goal: number): number {
-  if (!current) return 0;
-  if (current <= goal) return 100;
-  // overshoot: cap at 100 still but show different visual
-  return 100;
+/**
+ * How far the user has moved from where they started toward their goal.
+ *
+ * Progress needs three points, not two: the same 80 kg is 0% done for
+ * someone who started at 80 and 100% done for someone who started at 95.
+ * The baseline is the first recorded weight, so this works the same for
+ * cutting (goal below start) and bulking (goal above it).
+ */
+function goalProgressPct(
+  startKg: number | null,
+  currentKg: number | null,
+  goalKg: number,
+): number {
+  if (startKg === null || currentKg === null) return 0;
+  const span = goalKg - startKg;
+  // Started at the goal: it's met exactly while they stay there.
+  if (Math.abs(span) < 0.05) {
+    return Math.abs(currentKg - goalKg) < 0.05 ? 100 : 0;
+  }
+  const moved = currentKg - startKg;
+  return Math.max(0, Math.min(100, (moved / span) * 100));
 }
 
 export function ProgressClient() {
@@ -112,7 +129,7 @@ export function ProgressClient() {
     if (!data) return [];
     return data.weights.map((w) => ({
       date: w.date.slice(5),
-      weight: w.weightKg,
+      weight: Number(fromKg(w.weightKg, data.settings.units).toFixed(1)),
     }));
   }, [data]);
 
@@ -178,13 +195,14 @@ export function ProgressClient() {
   }
   if (!data) return null;
 
-  const cw = data.currentWeight ?? data.settings.weightGoalKg;
-  const goalPct = pctToGoal(cw, data.settings.weightGoalKg);
-  // Show overshoot as 100% for ring fill but display different message
-  const ringPct =
-    cw <= data.settings.weightGoalKg
-      ? Math.max(0, Math.min(100, 100 - ((cw - data.settings.weightGoalKg) / data.settings.weightGoalKg) * 100))
-      : 100;
+  const units = data.settings.units;
+  const cw = data.currentWeight;
+  const startKg = data.weights.length ? data.weights[0]!.weightKg : null;
+  const goalPct = Math.round(
+    goalProgressPct(startKg, cw, data.settings.weightGoalKg),
+  );
+  // One number drives both the headline and the ring, so they can't drift.
+  const ringPct = goalPct;
 
   const totalCal = dietMeals.reduce((a, b) => a + b.calories, 0);
   const totalProtein = dietMeals.reduce((a, b) => a + b.proteinG, 0);
@@ -215,7 +233,8 @@ export function ProgressClient() {
               <span className="text-accent-red text-xl">%</span>
             </div>
             <p className="text-fg-muted text-sm mt-2 font-mono-label">
-              {cw.toFixed(1)} {data.settings.units} CURRENT → {data.settings.weightGoalKg.toFixed(1)} {data.settings.units} GOAL
+              {formatWeight(cw, units, { withUnit: true })} CURRENT →{" "}
+              {formatWeight(data.settings.weightGoalKg, units, { withUnit: true })} GOAL
             </p>
           </div>
           <div className="relative w-32 h-32">
@@ -303,7 +322,7 @@ export function ProgressClient() {
                       >
                         <td className="px-2 py-2">{n.date}</td>
                         <td className="px-2 py-2 text-right">
-                          {n.weightKg} {data.settings.units}
+                          {formatWeight(n.weightKg, units, { withUnit: true })}
                         </td>
                         <td className="px-2 py-2 text-right">
                           {n.calories} kcal
@@ -323,7 +342,7 @@ export function ProgressClient() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <Card>
-          <CardHeader eyebrow="MUSCLE MAP" title="Today\u2019s soreness" />
+          <CardHeader eyebrow="MUSCLE MAP" title="Today’s soreness" />
           <CardBody>
             <BodyMap soreness={data.sorenessByGroup} />
             <div className="mt-4 space-y-2">
@@ -382,7 +401,7 @@ export function ProgressClient() {
         <Card>
           <CardHeader
             eyebrow="DIET PLAN"
-            title="Today\u2019s plan"
+            title="Today’s plan"
           />
           <div className="px-5">
             <Button size="sm" variant="ghost" onClick={addMeal}>

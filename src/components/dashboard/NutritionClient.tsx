@@ -7,12 +7,13 @@ import { Button } from "@/components/ui/Button";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { BigStat } from "@/components/ui/BigStat";
 import { apiGet, apiPost, apiDelete } from "@/lib/client";
-import { Loader2, Save, Trash2 } from "lucide-react";
+import { formatWeight, toKg } from "@/lib/units";
+import { Loader2, Save, Trash2, Sparkles } from "lucide-react";
 import type { NutritionLog } from "@/lib/types";
 
 interface DashboardData {
   today: string;
-  settings: { calorieGoal: number; proteinGoal: number; units: string };
+  settings: { calorieGoal: number; proteinGoal: number; units: "kg" | "lb" };
   nutrition: {
     today: NutritionLog | null;
     history: NutritionLog[];
@@ -30,13 +31,26 @@ export function NutritionClient() {
     notes: "",
   });
   const [saving, setSaving] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiGoal, setAiGoal] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState<string | null>(null);
 
   async function refresh() {
     try {
-      const d = await apiGet<DashboardData>("/api/dashboard");
+      const [d, ai] = await Promise.all([
+        apiGet<DashboardData>("/api/dashboard"),
+        apiGet<{ enabled: boolean }>("/api/ai/status").catch(() => ({
+          enabled: false,
+        })),
+      ]);
       setData(d);
+      setAiEnabled(ai.enabled);
       setForm({
-        weightKg: String(d.nutrition.today?.weightKg ?? ""),
+        weightKg:
+          d.nutrition.today?.weightKg == null
+            ? ""
+            : formatWeight(d.nutrition.today.weightKg, d.settings.units),
         calories: String(d.nutrition.today?.calories ?? ""),
         proteinG: String(d.nutrition.today?.proteinG ?? ""),
         notes: d.nutrition.today?.notes ?? "",
@@ -56,9 +70,13 @@ export function NutritionClient() {
     if (!data) return;
     setSaving(true);
     try {
+      const typedWeight = form.weightKg.trim();
       await apiPost("/api/nutrition", {
         date: data.today,
-        weightKg: Number(form.weightKg) || 0,
+        // Blank means "didn't weigh in today", not zero.
+        weightKg: typedWeight
+          ? toKg(Number(typedWeight), data.settings.units)
+          : null,
         calories: Number(form.calories) || 0,
         proteinG: Number(form.proteinG) || 0,
         notes: form.notes,
@@ -68,6 +86,37 @@ export function NutritionClient() {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  /**
+   * Sets today's calorie and protein targets from the user's goal, and
+   * writes the suggested meals into today's diet plan.
+   */
+  async function aiTargets() {
+    if (aiGoal.trim().length < 3) {
+      setError("Describe your goal first.");
+      return;
+    }
+    setAiBusy(true);
+    setError(null);
+    setAiNote(null);
+    try {
+      const res = await apiPost<{
+        nutrition: { calories: number; proteinG: number; rationale: string };
+      }>("/api/ai/nutrition", {
+        goalText: aiGoal.trim(),
+        apply: true,
+        date: data?.today,
+      });
+      setAiNote(
+        `Targets set to ${res.nutrition.calories} kcal and ${res.nutrition.proteinG} g protein. ${res.nutrition.rationale}`,
+      );
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not set targets");
+    } finally {
+      setAiBusy(false);
     }
   }
 
@@ -178,6 +227,40 @@ export function NutritionClient() {
         </Card>
       </div>
 
+      {aiEnabled ? (
+        <Card className="mb-8 border-accent-red/30">
+          <CardHeader
+            eyebrow="AI TARGETS"
+            title="Let the coach set your numbers"
+            description="Your calorie and protein targets, worked out from your goal and current weight, with a day of meals to hit them."
+          />
+          <CardBody>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={aiGoal}
+                placeholder="e.g. lean bulk to 75 kg with visible abs"
+                onChange={(e) => setAiGoal(e.target.value)}
+                className="flex-1 min-w-0 bg-bg border border-border rounded px-3 h-10 text-sm focus:outline-none focus:border-accent-red"
+              />
+              <Button variant="primary" onClick={aiTargets} disabled={aiBusy}>
+                {aiBusy ? (
+                  <Loader2 className="animate-spin" size={14} />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+                Set targets
+              </Button>
+            </div>
+            {aiNote ? (
+              <p className="text-sm text-fg-muted mt-3 leading-relaxed">
+                {aiNote}
+              </p>
+            ) : null}
+          </CardBody>
+        </Card>
+      ) : null}
+
       <MonoLabel>LOG TODAY</MonoLabel>
       <h2 className="text-2xl font-semibold mt-2 mb-3">
         Keep the signal honest.
@@ -186,9 +269,10 @@ export function NutritionClient() {
         <CardBody>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <label className="text-xs text-fg-dim font-mono-label">
-              Weight (kg)
+              Weight ({data.settings.units})
               <input
                 type="number"
+                placeholder="optional"
                 value={form.weightKg}
                 onChange={(e) => setForm({ ...form, weightKg: e.target.value })}
                 className="mt-1 w-full bg-bg border border-border rounded px-3 h-10 text-sm focus:outline-none focus:border-accent-red"
@@ -262,7 +346,11 @@ export function NutritionClient() {
                     className="border-b border-border last:border-0"
                   >
                     <td className="px-4 py-3">{log.date}</td>
-                    <td className="px-4 py-3 text-right">{log.weightKg} kg</td>
+                    <td className="px-4 py-3 text-right">
+                      {formatWeight(log.weightKg, data.settings.units, {
+                        withUnit: true,
+                      })}
+                    </td>
                     <td className="px-4 py-3 text-right">{log.calories}</td>
                     <td className="px-4 py-3 text-right">{log.proteinG} g</td>
                     <td className="px-2">

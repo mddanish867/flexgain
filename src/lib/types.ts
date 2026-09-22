@@ -1,7 +1,7 @@
 /**
- * FlexGain — shared types for the in-memory data store.
- * These shapes are intentionally small. The full dashboard task will
- * expand them with nutrition logs, exercises, weight history, etc.
+ * FlexGain — shared data shapes.
+ * Every persisted entity has a row type in its repository module under
+ * src/lib; these are the application-facing shapes those rows map to.
  */
 
 export type UserUnits = "kg" | "lb";
@@ -22,12 +22,20 @@ export interface User {
   passwordSalt: string;
   createdAt: number;
   settings: UserSettings;
+  /**
+   * Incremented to invalidate every session issued before the bump.
+   * Sessions carry this value as `tv`; a mismatch means the token was
+   * issued before a "sign out everywhere" and is no longer accepted.
+   */
+  tokenVersion: number;
 }
 
 export interface SessionPayload {
   uid: string;
   email: string;
   name: string;
+  /** Token version this session was issued at; see User.tokenVersion. */
+  tv?: number;
   iat?: number;
   exp?: number;
 }
@@ -69,7 +77,8 @@ export interface NutritionLog {
   userId: string;
   /** YYYY-MM-DD */
   date: string;
-  weightKg: number;
+  /** null when the day was logged without stepping on a scale. */
+  weightKg: number | null;
   calories: number;
   proteinG: number;
   notes: string;

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/Label";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { MonoLabel } from "@/components/ui/MonoLabel";
 import { apiPatch } from "@/lib/client";
+import { formatWeight, toKg } from "@/lib/units";
 import type { PublicUser } from "@/lib/types";
 
 interface SettingsFormProps {
@@ -17,8 +18,10 @@ interface SettingsFormProps {
 export function SettingsForm({ user }: SettingsFormProps) {
   const router = useRouter();
   const [name, setName] = useState(user.name);
+  // Held in whichever unit the user is currently reading; converted to kg
+  // on save and re-rendered when they switch units.
   const [weightGoal, setWeightGoal] = useState(
-    String(user.settings.weightGoalKg),
+    formatWeight(user.settings.weightGoalKg, user.settings.units),
   );
   const [calorieGoal, setCalorieGoal] = useState(
     String(user.settings.calorieGoal),
@@ -28,6 +31,7 @@ export function SettingsForm({ user }: SettingsFormProps) {
   );
   const [units, setUnits] = useState<"kg" | "lb">(user.settings.units);
   const [saving, setSaving] = useState(false);
+  const [signingOutAll, setSigningOutAll] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +43,7 @@ export function SettingsForm({ user }: SettingsFormProps) {
     try {
       await apiPatch("/api/settings", {
         name: name.trim() || user.name,
-        weightGoalKg: Number(weightGoal),
+        weightGoalKg: toKg(Number(weightGoal), units),
         calorieGoal: Number(calorieGoal),
         proteinGoal: Number(proteinGoal),
         units,
@@ -54,7 +58,14 @@ export function SettingsForm({ user }: SettingsFormProps) {
   }
 
   async function saveUnits(next: "kg" | "lb") {
+    if (next === units) return;
+    // Re-express the goal already on screen in the new unit, so switching
+    // display never silently rewrites the stored kilogram value.
+    const currentGoalKg = toKg(Number(weightGoal), units);
     setUnits(next);
+    if (Number.isFinite(currentGoalKg)) {
+      setWeightGoal(formatWeight(currentGoalKg, next));
+    }
     try {
       await apiPatch("/api/settings", { units: next });
       router.refresh();
@@ -67,6 +78,25 @@ export function SettingsForm({ user }: SettingsFormProps) {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
     router.refresh();
+  }
+
+  async function signOutEverywhere() {
+    if (
+      !confirm(
+        "Sign out on every device? You'll need to sign in again everywhere.",
+      )
+    )
+      return;
+    setSigningOutAll(true);
+    try {
+      const res = await fetch("/api/auth/logout-all", { method: "POST" });
+      if (!res.ok) throw new Error("Could not sign out everywhere");
+      router.push("/login");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign out failed");
+      setSigningOutAll(false);
+    }
   }
 
   return (
@@ -105,13 +135,13 @@ export function SettingsForm({ user }: SettingsFormProps) {
           <form onSubmit={saveGoals} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <Label htmlFor="weight">Weight goal</Label>
+                <Label htmlFor="weight">Weight goal ({units})</Label>
                 <Input
                   id="weight"
                   type="number"
                   inputMode="decimal"
-                  min={20}
-                  max={500}
+                  min={units === "lb" ? 44 : 20}
+                  max={units === "lb" ? 880 : 400}
                   step="0.1"
                   value={weightGoal}
                   onChange={(e) => setWeightGoal(e.target.value)}
@@ -136,8 +166,8 @@ export function SettingsForm({ user }: SettingsFormProps) {
                   id="protein"
                   type="number"
                   inputMode="numeric"
-                  min={40}
-                  max={500}
+                  min={20}
+                  max={600}
                   step="5"
                   value={proteinGoal}
                   onChange={(e) => setProteinGoal(e.target.value)}
@@ -165,7 +195,7 @@ export function SettingsForm({ user }: SettingsFormProps) {
         <CardHeader
           eyebrow="UNITS"
           title="Display preference"
-          description="Affects weight values across the app."
+          description="Weights are stored in kg and converted for display."
         />
         <CardBody>
           <div className="inline-flex rounded border border-border overflow-hidden">
@@ -192,12 +222,20 @@ export function SettingsForm({ user }: SettingsFormProps) {
         <CardHeader
           eyebrow="ACCOUNT"
           title="Danger zone"
-          description="Sign out everywhere or delete your account."
+          description="Sign out on this device or everywhere, or delete your account."
         />
         <CardBody>
           <div className="flex flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={signOut} type="button">
               Sign out
+            </Button>
+            <Button
+              variant="outline"
+              onClick={signOutEverywhere}
+              type="button"
+              disabled={signingOutAll}
+            >
+              {signingOutAll ? "Signing out…" : "Sign out everywhere"}
             </Button>
             <Button
               variant="ghost"

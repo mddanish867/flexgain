@@ -9,8 +9,14 @@ export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  // Uploads are private. Browsers send the session cookie on same-origin
+  // <img> requests, so scoping by owner still renders the exercise cards.
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
-  const img = await getImage(id);
+  // Passing the owner makes a cross-user read indistinguishable from a
+  // missing image, so this can't be used to probe for valid ids.
+  const img = await getImage(id, user.id);
   if (!img) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

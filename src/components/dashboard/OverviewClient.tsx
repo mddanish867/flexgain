@@ -11,6 +11,7 @@ import { MonoLabel } from "@/components/ui/MonoLabel";
 import { Badge } from "@/components/ui/Badge";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { apiGet, apiPost } from "@/lib/client";
+import { formatWeight, fromKg, toKg } from "@/lib/units";
 import {
   Dumbbell,
   Loader2,
@@ -79,7 +80,10 @@ export function OverviewClient({ user }: { user: { name: string } }) {
       setData(d);
       if (d.nutrition.today) {
         setLogForm({
-          weightKg: String(d.nutrition.today.weightKg ?? ""),
+          weightKg:
+            d.nutrition.today.weightKg === null
+              ? ""
+              : formatWeight(d.nutrition.today.weightKg, d.settings.units),
           calories: String(d.nutrition.today.calories ?? ""),
           proteinG: String(d.nutrition.today.proteinG ?? ""),
           notes: d.nutrition.today.notes ?? "",
@@ -87,7 +91,7 @@ export function OverviewClient({ user }: { user: { name: string } }) {
       } else if (d.currentWeight != null) {
         setLogForm((f) => ({
           ...f,
-          weightKg: String(d.currentWeight ?? ""),
+          weightKg: formatWeight(d.currentWeight, d.settings.units),
         }));
       }
     } catch (e) {
@@ -127,9 +131,13 @@ export function OverviewClient({ user }: { user: { name: string } }) {
     if (!data) return;
     setSavingLog(true);
     try {
+      const typedWeight = logForm.weightKg.trim();
       await apiPost("/api/nutrition", {
         date: data.today,
-        weightKg: Number(logForm.weightKg) || 0,
+        // Blank means "didn't weigh in today", not zero.
+        weightKg: typedWeight
+          ? toKg(Number(typedWeight), data.settings.units)
+          : null,
         calories: Number(logForm.calories) || 0,
         proteinG: Number(logForm.proteinG) || 0,
         notes: logForm.notes,
@@ -171,10 +179,10 @@ export function OverviewClient({ user }: { user: { name: string } }) {
   if (!data) return null;
   const consumed = data.nutrition.today?.calories ?? 0;
   const protein = data.nutrition.today?.proteinG ?? 0;
-  const currentWeight =
-    data.currentWeight ?? data.settings.weightGoalKg - 3.4;
+  const units = data.settings.units;
+  const currentWeight = data.currentWeight;
   const remainingToGoal =
-    data.settings.weightGoalKg - currentWeight;
+    currentWeight === null ? null : data.settings.weightGoalKg - currentWeight;
   const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   return (
@@ -204,15 +212,19 @@ export function OverviewClient({ user }: { user: { name: string } }) {
           <CardBody>
             <BigStat
               label=""
-              value={currentWeight.toFixed(1)}
-              unit={data.settings.units === "kg" ? "kg" : "lb"}
+              value={formatWeight(currentWeight, units)}
+              unit={currentWeight === null ? "" : units}
               delta={
-                remainingToGoal > 0 ? (
-                  <span className="text-fg-muted">
-                    ↓ {remainingToGoal.toFixed(1)} {data.settings.units} to {data.settings.weightGoalKg.toFixed(1)} goal
-                  </span>
-                ) : (
+                remainingToGoal === null ? (
+                  <span className="text-fg-muted">No weight logged yet</span>
+                ) : Math.abs(remainingToGoal) < 0.05 ? (
                   <span className="text-accent-green">at goal</span>
+                ) : (
+                  <span className="text-fg-muted">
+                    {remainingToGoal < 0 ? "↓" : "↑"}{" "}
+                    {Math.abs(fromKg(remainingToGoal, units)).toFixed(1)} {units}{" "}
+                    to {formatWeight(data.settings.weightGoalKg, units)} goal
+                  </span>
                 )
               }
             />
@@ -338,7 +350,10 @@ export function OverviewClient({ user }: { user: { name: string } }) {
                     <div className="min-w-0 flex-1">
                       <div className="font-medium truncate">{ex.name}</div>
                       <div className="text-xs text-fg-muted font-mono-label">
-                        {ex.sets} × {ex.reps} · {ex.weightKg > 0 ? `${ex.weightKg}kg` : "Bodyweight"}
+                        {ex.sets} × {ex.reps} ·{" "}
+                        {ex.weightKg > 0
+                          ? formatWeight(ex.weightKg, units, { withUnit: true })
+                          : "Bodyweight"}
                       </div>
                     </div>
                     <button
@@ -363,10 +378,11 @@ export function OverviewClient({ user }: { user: { name: string } }) {
           <CardBody>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <label className="text-xs text-fg-dim font-mono-label">
-                Weight
+                Weight ({units})
                 <input
                   type="number"
                   inputMode="decimal"
+                  placeholder="optional"
                   value={logForm.weightKg}
                   onChange={(e) =>
                     setLogForm((f) => ({ ...f, weightKg: e.target.value }))

@@ -32,8 +32,19 @@ diet, and see it all in one sharp, dark instrument panel.
 - **Auth + dashboard** — email/password with PBKDF2 hashing, JWT
   session in an HTTP-only cookie, sidebar layout, protected routes via
   Next.js middleware.
+- **AI Coach** — describe your goal in plain words ("big biceps with all
+  the cuts"), pick a focus area, and get a full 7-day split with per-
+  exercise muscle targeting, extreme-intensity movements flagged, and the
+  calories, protein and meals that back it. One click writes the whole
+  thing into your real schedule.
+- **Exercise auto-fill** — type an exercise name and the rest of the form
+  fills itself: corrected name, description, the muscles it trains shown
+  on a body map, sets, reps, a starting weight and form cues.
+- **AI nutrition targets** — daily calorie and protein goals worked out
+  from your goal and current weight, with a day of meals to hit them.
 - **Settings** — update name, weight goal, calorie goal, protein goal,
-  and kg/lb units; sign out.
+  and kg/lb units (a real conversion, not just a label); sign out on this
+  device or everywhere.
 - **Image uploads** — multipart upload, 5 MB cap, served back via a
   streaming route, scoped per user.
 - **User dropdown** in the top bar after login with **Dashboard**,
@@ -76,7 +87,8 @@ that visual language and applies it to a personal fitness log.
 - **jose** for JWT signing (HS256, edge-runtime safe)
 - **zod** for input validation
 - **clsx + tailwind-merge** for conditional classes
-- **In-memory data store** (see *Demo data caveat* below) — no DB
+- **Postgres** via `pg` — all data is durable and shared across instances
+- **Google Gemini** for the AI features, called over its REST API
 
 ---
 
@@ -106,28 +118,51 @@ npm run start
 
 ---
 
-## ⚠️ Demo data caveat
+## 🤖 AI features
 
-This project uses a **process-memory data store**. There is no database.
-On every server restart — including each Vercel cold start — every user,
-exercise, nutrition log, weight entry, muscle log, diet plan, and
-**every uploaded image is lost**. The store also resets on every
-Next.js HMR module reload in dev.
+Set `GEMINI_API_KEY` to switch them on. **Without a key the app runs
+completely normally** — the AI routes answer 503 and the UI hides its
+buttons, so nothing breaks and nothing looks half-finished.
 
-This is intentional for a single-process demo build, and is documented
-in code:
+```bash
+# .env.local
+GEMINI_API_KEY=your-key-from-https://aistudio.google.com/apikey
+# GEMINI_MODEL=gemini-2.5-flash    # the default
+```
 
-- `src/lib/store.ts` — singleton user store + per-user collections
-- `src/lib/users.ts` — user CRUD
-- `src/lib/exercises.ts`, `nutrition.ts`, `muscles.ts`, `diet.ts` —
-  scoped repositories
-- Uploaded images are kept as base64 in the same in-memory store; they
-  have no persistence.
+| Route | What it does |
+| --- | --- |
+| `POST /api/ai/exercise` | Name in, full exercise out: muscles, description, sets/reps/weight |
+| `POST /api/ai/nutrition` | Daily calorie + protein targets and a day of meals |
+| `POST /api/ai/plan` | A 7-day training block for a goal, plus its nutrition |
+| `POST /api/ai/plan/[id]/apply` | Writes a plan into the real exercises and diet tables |
+| `GET /api/ai/status` | Whether AI is configured (never returns the key) |
 
-A real deployment should swap `src/lib/store.ts` for Postgres / SQLite /
-Drizzle / Prisma. The data shapes in `src/lib/types.ts` are designed to
-make that swap mechanical — all mutations go through repository
-functions, so swapping the backend is a single-file change.
+How it holds together:
+
+- **`src/lib/ai/muscles.ts` is the contract.** One list of muscle ids is
+  shared by the prompt, the response schema and the anatomy SVG, so an
+  answer can always be drawn. Fine-grained ids collapse onto the coarse
+  `MuscleGroup` the exercises table already stores.
+- **Answers are validated twice.** Gemini's `responseSchema` constrains
+  the structure during decoding; zod then checks the values, because a
+  schema cannot tell you that 400 sets is wrong. Numbers and enums are
+  strict; over-long prose is trimmed rather than rejected, since throwing
+  away a good 30-second generation over a long sentence is worse.
+- **Muscle diagrams are drawn, not generated.** An image model produces
+  plausible bodies but cannot be trusted to put the lats in the right
+  place. `MuscleAnatomy.tsx` has a shape per muscle and lights up exactly
+  the ones the model named — accurate, instant and free.
+- **Results are cached** in Postgres, keyed by a hash of the request with
+  bodyweight bucketed, so repeat lookups cost nothing. The key carries a
+  `CACHE_VERSION` — bump it whenever a prompt or schema changes, or old
+  entries keep being served.
+- **Safety constraints** are pinned in every system prompt: no drugs, no
+  sub-1200 kcal targets, no water-cutting. "Extreme" means training
+  intensity, never unsafe.
+
+Swapping to the official `@google/generative-ai` SDK means rewriting
+`callGemini` in `src/lib/ai/gemini.ts` and nothing else.
 
 ---
 
@@ -146,9 +181,9 @@ functions, so swapping the backend is a single-file change.
 5. Click **Deploy**. Vercel will run `next build` and serve from the
    edge.
 
-Because data is in-memory, the **first request after each cold start
-will look like a fresh install**. For a real launch you'll want to wire
-up a database and an object store for uploaded images.
+You will also need `DATABASE_URL` pointing at a Postgres instance, and
+`GEMINI_API_KEY` if you want the AI features. Plan generation takes ~35
+seconds, so the AI routes set `maxDuration = 60`.
 
 `vercel.json` is included with the framework preset, region, and a
 private cache-control header for the image streaming route.
@@ -187,7 +222,10 @@ src/
 │   ├── cn.ts                   # clsx + tailwind-merge helper
 │   ├── password.ts             # PBKDF2 hashing
 │   ├── session.ts              # JWT signing + cookies
-│   ├── store.ts                # in-memory data store
+│   ├── db.ts                   # Postgres pool + schema bootstrap
+│   ├── units.ts                # kg/lb conversion
+│   ├── rateLimit.ts            # sign-in rate limiting
+│   ├── ai/                     # gemini client, prompts, schemas, cache
 │   ├── types.ts                # shared types
 │   ├── users.ts                # user repo
 │   ├── exercises.ts            # exercise repo
@@ -209,9 +247,28 @@ src/
 - Session JWTs are HS256-signed, stored in HTTP-only, sameSite=lax,
   Secure-in-prod cookies.
 - All API routes are scoped to the current user — cross-user reads or
-  writes return 401/403/404.
+  writes return 401/403/404. That includes uploaded images: a read for an
+  image you don't own is indistinguishable from one that doesn't exist.
+- Sign-in is rate limited per IP (20 / 15 min, enforced *before* password
+  hashing) and per email address (10 / 15 min). The per-email limit is
+  checked only after a failed password check, so an attacker cannot lock
+  a real user out of their own account by failing logins against it.
+- An unknown email and a wrong password cost the same amount of hashing,
+  so response timing does not reveal which addresses are registered.
+- **Sign out everywhere** bumps a per-user `token_version` that every
+  session is validated against, which revokes already-issued JWTs before
+  their 14-day expiry — stateless tokens can't be deleted individually.
+- Database TLS certificates are verified by default; see
+  `DATABASE_SSL_NO_VERIFY` in `.env.example` for the escape hatch.
 - Image upload is capped at 5 MB and rejects non-`image/*` payloads.
+  Uploads are deleted with the exercise that references them.
+- `/api/health` is intentionally unauthenticated for uptime probes and
+  reports only whether the database answers — no counts, no user data.
 - The dashboard and settings pages are gated by `middleware.ts`.
+
+> **Never commit `.env`.** It is gitignored. If a `SESSION_SECRET` ever
+> reaches a remote, rotate it — anyone holding it can mint a session for
+> any account.
 
 ---
 

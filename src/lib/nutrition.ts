@@ -8,7 +8,7 @@ interface NutritionRow {
   id: string;
   user_id: string;
   date: string;
-  weight_kg: number;
+  weight_kg: number | null;
   calories: number;
   protein_g: number;
   notes: string;
@@ -20,7 +20,7 @@ function fromRow(r: NutritionRow): NutritionLog {
     id: r.id,
     userId: r.user_id,
     date: r.date,
-    weightKg: Number(r.weight_kg),
+    weightKg: r.weight_kg === null ? null : Number(r.weight_kg),
     calories: Number(r.calories),
     proteinG: Number(r.protein_g),
     notes: r.notes,
@@ -87,8 +87,9 @@ export async function logNutrition(
   );
   const log = fromRow(rows[0]!);
 
-  // Also push a weight entry when the log has a weight value
-  if (input.weightKg > 0) {
+  // Mirror into the weight history only when a weight was actually
+  // recorded — a day logged without one must not land on the chart.
+  if (input.weightKg !== null && input.weightKg > 0) {
     await logWeight(userId, { date: input.date, weightKg: input.weightKg });
   }
 

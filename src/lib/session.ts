@@ -50,7 +50,15 @@ export async function verifySession(
   }
 }
 
-/** Read the session from the current request's cookies (server components & route handlers). */
+/**
+ * Read and signature-verify the session cookie.
+ *
+ * This confirms the token was signed by us and hasn't expired — it does
+ * NOT check whether the session was since revoked, because that needs a
+ * database read. Application code should call `getCurrentUser` or
+ * `getCurrentUserRecord` from lib/currentUser instead; reach for this
+ * only where a DB round trip isn't available, such as middleware.
+ */
 export async function getSession(): Promise<SessionPayload | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE_NAME)?.value;

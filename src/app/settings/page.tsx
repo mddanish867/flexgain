@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
-import { findUserById } from "@/lib/users";
+import { getCurrentUserRecord } from "@/lib/currentUser";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { SettingsForm } from "@/components/dashboard/SettingsForm";
 
@@ -9,9 +8,7 @@ export const metadata = {
 };
 
 export default async function SettingsPage() {
-  const session = await getSession();
-  if (!session) redirect("/login");
-  const user = await findUserById(session.uid);
+  const user = await getCurrentUserRecord();
   if (!user) redirect("/login");
 
   return (

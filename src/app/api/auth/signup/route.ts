@@ -39,7 +39,12 @@ export async function POST(req: NextRequest) {
   }
 
   const user = await createUser({ email, password, name });
-  const token = await signSession({ uid: user.id, email: user.email, name: user.name });
+  const token = await signSession({
+    uid: user.id,
+    email: user.email,
+    name: user.name,
+    tv: user.tokenVersion,
+  });
   const cookie = sessionCookieOptions();
   const res = NextResponse.json({ user: toPublicUser(user) }, { status: 201 });
   res.cookies.set(cookie.name, token, cookie);

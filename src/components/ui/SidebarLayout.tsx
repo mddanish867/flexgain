@@ -12,6 +12,7 @@ import {
   Menu,
   Salad,
   Settings,
+  Sparkles,
   X,
 } from "lucide-react";
 import { BrandMark } from "@/components/ui/BrandMark";
@@ -28,6 +29,7 @@ const NAV = [
   { href: "/dashboard/workouts", label: "Workouts", icon: Dumbbell },
   { href: "/dashboard/nutrition", label: "Nutrition", icon: Salad },
   { href: "/dashboard/progress", label: "Progress", icon: LineChart },
+  { href: "/dashboard/coach", label: "AI Coach", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

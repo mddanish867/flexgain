@@ -5,7 +5,11 @@ import { Card, CardBody } from "@/components/ui/Card";
 import { MonoLabel } from "@/components/ui/MonoLabel";
 import { Button } from "@/components/ui/Button";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/client";
-import { Loader2, Pencil, Plus, Trash2, X, Dumbbell } from "lucide-react";
+import { formatWeight, fromKg, toKg } from "@/lib/units";
+import type { UserUnits } from "@/lib/types";
+import { Loader2, Pencil, Plus, Trash2, X, Dumbbell, Sparkles } from "lucide-react";
+import { MuscleAnatomy } from "@/components/dashboard/MuscleAnatomy";
+import { MUSCLE_LABELS, type MuscleId } from "@/lib/ai/muscles";
 import type { Exercise, MuscleGroup } from "@/lib/types";
 
 const MUSCLE_GROUPS: MuscleGroup[] = [
@@ -19,6 +23,27 @@ const MUSCLE_GROUPS: MuscleGroup[] = [
 ];
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** What POST /api/ai/exercise returns once validated server-side. */
+interface ExerciseFillResult {
+  fill: {
+    canonicalName: string;
+    recognized: boolean;
+    description: string;
+    primaryMuscles: MuscleId[];
+    secondaryMuscles: MuscleId[];
+    equipment: string;
+    isBodyweight: boolean;
+    sets: number;
+    reps: number;
+    suggestedWeightKg: number;
+    restSeconds: number;
+    difficulty: string;
+    formTips: string[];
+  };
+  muscleGroup: MuscleGroup;
+  cached: boolean;
+}
 
 interface FormState {
   name: string;
@@ -49,17 +74,29 @@ function labelMuscle(g: MuscleGroup): string {
 
 export function WorkoutsClient() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [units, setUnits] = useState<UserUnits>("kg");
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Exercise | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [filling, setFilling] = useState(false);
+  const [fill, setFill] = useState<ExerciseFillResult | null>(null);
 
   async function refresh() {
     try {
-      const d = await apiGet<{ exercises: Exercise[] }>("/api/exercises");
+      const [d, s, ai] = await Promise.all([
+        apiGet<{ exercises: Exercise[] }>("/api/exercises"),
+        apiGet<{ settings: { units: UserUnits } }>("/api/settings"),
+        apiGet<{ enabled: boolean }>("/api/ai/status").catch(() => ({
+          enabled: false,
+        })),
+      ]);
       setExercises(d.exercises);
+      setUnits(s.settings.units);
+      setAiEnabled(ai.enabled);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -74,17 +111,55 @@ export function WorkoutsClient() {
   function openAdd() {
     setEditing(null);
     setForm(emptyForm);
+    setFill(null);
+    setError(null);
     setShowModal(true);
+  }
+
+  /**
+   * Fills the whole form from the exercise name: what it trains, a
+   * description, and a starting prescription. Weight comes back in kg and
+   * is converted into whatever unit the form is showing.
+   */
+  async function autoFill() {
+    const name = form.name.trim();
+    if (name.length < 2) {
+      setError("Type an exercise name first.");
+      return;
+    }
+    setFilling(true);
+    setError(null);
+    try {
+      const res = await apiPost<ExerciseFillResult>("/api/ai/exercise", { name });
+      setFill(res);
+      setForm((f) => ({
+        ...f,
+        name: res.fill.canonicalName,
+        muscleGroup: res.muscleGroup,
+        sets: res.fill.sets,
+        reps: res.fill.reps,
+        weightKg: Number(fromKg(res.fill.suggestedWeightKg, units).toFixed(1)),
+        notes: [res.fill.description, ...res.fill.formTips.map((t) => `• ${t}`)]
+          .join("\n")
+          .slice(0, 500),
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Auto-fill failed");
+    } finally {
+      setFilling(false);
+    }
   }
 
   function openEdit(ex: Exercise) {
     setEditing(ex);
+    setFill(null);
+    setError(null);
     setForm({
       name: ex.name,
       muscleGroup: ex.muscleGroup,
       sets: ex.sets,
       reps: ex.reps,
-      weightKg: ex.weightKg,
+      weightKg: Number(fromKg(ex.weightKg, units).toFixed(1)),
       dayOfWeek: ex.dayOfWeek,
       notes: ex.notes,
       imageFile: null,
@@ -114,7 +189,7 @@ export function WorkoutsClient() {
         muscleGroup: form.muscleGroup,
         sets: form.sets,
         reps: form.reps,
-        weightKg: form.weightKg,
+        weightKg: toKg(form.weightKg, units),
         dayOfWeek: form.dayOfWeek,
         notes: form.notes,
         imageId: imageId ?? null,
@@ -136,10 +211,8 @@ export function WorkoutsClient() {
   async function remove(ex: Exercise) {
     if (!confirm(`Delete \u201C${ex.name}\u201D?`)) return;
     try {
+      // The server drops the attached image as part of this call.
       await apiDelete(`/api/exercises/${ex.id}`);
-      if (ex.imageId) {
-        await apiDelete(`/api/images/${ex.imageId}`).catch(() => undefined);
-      }
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
@@ -213,7 +286,9 @@ export function WorkoutsClient() {
                   </span>
                   <span className="text-fg-dim">·</span>
                   <span className="text-fg-muted">
-                    {ex.weightKg > 0 ? `${ex.weightKg} kg` : "Bodyweight"}
+                    {ex.weightKg > 0
+                      ? formatWeight(ex.weightKg, units, { withUnit: true })
+                      : "Bodyweight"}
                   </span>
                 </div>
                 {ex.notes && (
@@ -266,13 +341,85 @@ export function WorkoutsClient() {
             <div className="grid grid-cols-2 gap-3">
               <label className="col-span-2 text-xs text-fg-dim font-mono-label">
                 Name
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="mt-1 w-full bg-bg border border-border rounded px-3 h-10 text-sm focus:outline-none focus:border-accent-red"
-                />
+                <div className="mt-1 flex gap-2">
+                  <input
+                    type="text"
+                    value={form.name}
+                    placeholder="e.g. Barbell Bench Press"
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && aiEnabled) {
+                        e.preventDefault();
+                        autoFill();
+                      }
+                    }}
+                    className="flex-1 min-w-0 bg-bg border border-border rounded px-3 h-10 text-sm focus:outline-none focus:border-accent-red"
+                  />
+                  {aiEnabled ? (
+                    <button
+                      type="button"
+                      onClick={autoFill}
+                      disabled={filling || form.name.trim().length < 2}
+                      title="Fill the rest of this form from the name"
+                      className="shrink-0 inline-flex items-center gap-1.5 h-10 px-3 rounded border border-accent-red/60 text-accent-red text-xs font-medium hover:bg-accent-red/10 disabled:opacity-40 disabled:hover:bg-transparent"
+                    >
+                      {filling ? (
+                        <Loader2 className="animate-spin" size={14} />
+                      ) : (
+                        <Sparkles size={14} />
+                      )}
+                      Auto-fill
+                    </button>
+                  ) : null}
+                </div>
               </label>
+
+              {fill ? (
+                <div className="col-span-2 rounded border border-border bg-bg p-3">
+                  {!fill.fill.recognized ? (
+                    <p className="text-[11px] text-accent-red mb-2 font-mono-label">
+                      NOT A KNOWN EXERCISE — VALUES ARE A BEST GUESS
+                    </p>
+                  ) : null}
+                  <div className="flex gap-3">
+                    <div className="w-32 shrink-0">
+                      <MuscleAnatomy
+                        primary={fill.fill.primaryMuscles}
+                        secondary={fill.fill.secondaryMuscles}
+                        showLegend={false}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-fg-muted leading-relaxed">
+                        {fill.fill.description}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {fill.fill.primaryMuscles.map((m) => (
+                          <span
+                            key={m}
+                            className="text-[10px] font-mono-label px-1.5 py-0.5 rounded border border-accent-red/60 text-accent-red"
+                          >
+                            {MUSCLE_LABELS[m]}
+                          </span>
+                        ))}
+                        {fill.fill.secondaryMuscles.map((m) => (
+                          <span
+                            key={m}
+                            className="text-[10px] font-mono-label px-1.5 py-0.5 rounded border border-border text-fg-dim"
+                          >
+                            {MUSCLE_LABELS[m]}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-fg-dim font-mono-label mt-2">
+                        {fill.fill.equipment} · {fill.fill.difficulty} ·{" "}
+                        {fill.fill.restSeconds}s rest
+                        {fill.cached ? " · cached" : ""}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <label className="text-xs text-fg-dim font-mono-label">
                 Muscle group
                 <select
@@ -328,7 +475,7 @@ export function WorkoutsClient() {
                 />
               </label>
               <label className="text-xs text-fg-dim font-mono-label">
-                Weight (kg)
+                Weight ({units})
                 <input
                   type="number"
                   value={form.weightKg}
